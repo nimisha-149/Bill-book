@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="theme-color" content="#1f2937">
+<title>Bill Book</title>
+<link rel="manifest" href="manifest.json">
+<style>
+*{box-sizing:border-box} body{margin:0;font-family:Arial,sans-serif;background:#f4f6f8;color:#1f2937}
+header{background:#1f2937;color:#fff;padding:18px;position:sticky;top:0;z-index:3}
+header h1{margin:0;font-size:24px}.sub{opacity:.75;font-size:13px;margin-top:4px}
+.wrap{max-width:1100px;margin:auto;padding:18px;display:grid;grid-template-columns:1.2fr .8fr;gap:18px}
+.card{background:#fff;border-radius:16px;padding:18px;box-shadow:0 4px 18px #00000010}
+h2{font-size:19px;margin:0 0 14px} label{font-size:13px;font-weight:bold;display:block;margin-top:10px}
+input,select,button{font:inherit} input{width:100%;padding:11px;border:1px solid #d7dce2;border-radius:9px;margin-top:5px}
+.row{display:grid;grid-template-columns:2fr 1fr 1fr 1fr auto;gap:8px;align-items:end;margin-top:8px}
+button{border:0;border-radius:9px;padding:11px 14px;background:#1f2937;color:#fff;cursor:pointer}
+button:hover{opacity:.9}.secondary{background:#e8edf2;color:#1f2937}.danger{background:#b91c1c}
+.actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:14px}
+.summary{background:#f7fafc;border-radius:12px;padding:14px;margin-top:15px}
+.summary div{display:flex;justify-content:space-between;padding:6px 0}.total{font-size:22px;font-weight:bold;border-top:1px solid #dfe5eb;margin-top:6px;padding-top:12px!important}
+.bill{border:1px solid #e1e5ea;border-radius:12px;padding:12px;margin-top:10px}
+.small{font-size:12px;color:#64748b}.history{max-height:530px;overflow:auto}
+.itemlist{font-size:13px}.pill{display:inline-block;padding:5px 9px;background:#e8edf2;border-radius:20px;margin:3px}
+#qrBox{display:none;text-align:center;margin-top:15px;padding:15px;border:1px dashed #94a3b8;border-radius:12px}
+#qrPattern{width:190px;height:190px;margin:10px auto;background:repeating-linear-gradient(90deg,#111 0 6px,#fff 6px 12px),repeating-linear-gradient(#111 0 6px,#fff 6px 12px);filter:contrast(2)}
+@media(max-width:800px){.wrap{grid-template-columns:1fr}.row{grid-template-columns:1fr 1fr}.row button{grid-column:span 2}}
+@media print{header,.noPrint,#qrBox{display:none!important}.wrap{display:block}.card{box-shadow:none;border:0}.history{display:none}}
+</style>
+</head>
+<body>
+<header><h1>🧾 Bill Book</h1><div class="sub">Simple offline billing for small shops</div></header>
+
+<div class="wrap">
+<section class="card">
+<h2>Shop & Customer</h2>
+<label>Shop name<input id="shopName" value="Bake n Spice"></label>
+<label>UPI ID<input id="upiId" placeholder="example@upi"></label>
+<label>Customer name<input id="customer" placeholder="Walk-in customer"></label>
+
+<h2 style="margin-top:22px">Add Items</h2>
+<div class="row">
+<div><label>Item<input id="itemName" placeholder="Item name"></label></div>
+<div><label>Price ₹<input id="price" type="number" min="0" placeholder="0"></label></div>
+<div><label>Qty<input id="qty" type="number" min="1" value="1"></label></div>
+<div><label>Discount %<input id="disc" type="number" min="0" value="0"></label></div>
+<button class="noPrint" onclick="addItem()">+ Add</button>
+</div>
+<div id="items"></div>
+
+<div class="row" style="grid-template-columns:1fr 1fr;margin-top:14px">
+<div><label>Tax %<input id="tax" type="number" min="0" value="5" oninput="render()"></label></div>
+<div><label>Bill number<input id="billNo" readonly></label></div>
+</div>
+
+<div class="summary">
+<div><span>Subtotal</span><b id="subtotal">₹0.00</b></div>
+<div><span>Discount</span><b id="discount">₹0.00</b></div>
+<div><span>Tax</span><b id="taxAmount">₹0.00</b></div>
+<div class="total"><span>Total</span><span id="total">₹0.00</span></div>
+</div>
+
+<div class="actions noPrint">
+<button onclick="saveBill()">Save Bill</button>
+<button class="secondary" onclick="window.print()">Print / Save PDF</button>
+<button class="secondary" onclick="shareBill()">Share Bill</button>
+<button class="secondary" onclick="showUPI()">UPI Payment</button>
+<button class="danger" onclick="clearCurrent()">Clear</button>
+</div>
+
+<div id="qrBox">
+<b>UPI Payment Link</b>
+<div id="qrPattern"></div>
+<div class="small">For a real QR scanner, use the UPI payment link below.</div>
+<a id="upiLink" target="_blank">Open UPI Payment</a>
+</div>
+</section>
+
+<aside>
+<div class="card">
+<h2>Today’s Sales</h2>
+<div class="summary">
+<div class="total"><span>Total sales</span><span id="dailyTotal">₹0.00</span></div>
+<div><span>Bills</span><span id="billCount">0</span></div>
+</div>
+<h2 style="margin-top:20px">Quick Items</h2>
+<div class="itemlist" id="quickItems"></div>
+</div>
+
+<div class="card history" style="margin-top:18px">
+<h2>Bill History</h2>
+<div id="history"></div>
+</div>
+</aside>
+</div>
+
+<script>
+let items=[];
+const key='billbook_bills_v1';
+function money(n){return '₹'+Number(n||0).toFixed(2)}
+function newNo(){return 'BB-'+Date.now().toString().slice(-6)}
+function init(){
+ document.getElementById('billNo').value=newNo();
+ render(); renderHistory();
+ if('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+}
+function addItem(){
+ const name=document.getElementById('itemName').value.trim();
+ const price=+document.getElementById('price').value, qty=+document.getElementById('qty').value||1;
+ const disc=+document.getElementById('disc').value||0;
+ if(!name||price<=0){alert('Enter item name and price');return}
+ items.push({name,price,qty,disc});
+ document.getElementById('itemName').value='';document.getElementById('price').value='';document.getElementById('qty').value=1;document.getElementById('disc').value=0;
+ render();
+}
+function removeItem(i){items.splice(i,1);render()}
+function calc(){
+ let sub=0,discount=0;
+ items.forEach(x=>{let v=x.price*x.qty;sub+=v;discount+=v*x.disc/100});
+ let taxable=sub-discount, tax=taxable*(+document.getElementById('tax').value||0)/100;
+ return {sub,discount,tax,total:taxable+tax};
+}
+function render(){
+ const c=calc();
+ document.getElementById('items').innerHTML=items.map((x,i)=>`<div class="bill"><b>${x.name}</b><br><span class="small">${x.qty} × ${money(x.price)} • ${x.disc}% discount</span><span style="float:right">${money(x.price*x.qty*(1-x.disc/100))}</span><button class="danger noPrint" style="float:right;padding:5px 8px;margin-right:8px" onclick="removeItem(${i})">×</button></div>`).join('')||'<p class="small">No items added yet.</p>';
+ subtotal.textContent=money(c.sub);discount.textContent='− '+money(c.discount);taxAmount.textContent=money(c.tax);total.textContent=money(c.total);
+}
+function bills(){return JSON.parse(localStorage.getItem(key)||'[]')}
+function saveBill(){
+ if(!items.length){alert('Add at least one item');return}
+ const c=calc(), bill={no:billNo.value,date:new Date().toISOString(),shop:shopName.value||'My Shop',customer:customer.value||'Walk-in',items:[...items],tax:+tax.value,total:c.total};
+ let all=bills();all.unshift(bill);localStorage.setItem(key,JSON.stringify(all));
+ alert('Bill saved successfully!');renderHistory();clearCurrent();
+}
+function renderHistory(){
+ const all=bills(), today=new Date().toDateString();
+ const todayBills=all.filter(b=>new Date(b.date).toDateString()===today);
+ dailyTotal.textContent=money(todayBills.reduce((s,b)=>s+b.total,0));billCount.textContent=todayBills.length;
+ history.innerHTML=all.length?all.map(b=>`<div class="bill"><b>${b.no}</b><br><span class="small">${new Date(b.date).toLocaleString()} • ${b.customer}</span><br><b>${money(b.total)}</b><button class="secondary noPrint" style="float:right;padding:6px" onclick="loadBill('${b.no}')">View</button></div>`).join(''):'<p class="small">No saved bills yet.</p>';
+ const freq={};all.forEach(b=>b.items.forEach(x=>freq[x.name]=(freq[x.name]||0)+1));
+ quickItems.innerHTML=Object.keys(freq).slice(0,8).map(x=>`<span class="pill">${x}</span>`).join('')||'Add bills to see popular items.';
+}
+function loadBill(no){
+ const b=bills().find(x=>x.no===no);if(!b)return;
+ items=b.items;shopName.value=b.shop;customer.value=b.customer;tax.value=b.tax;billNo.value=b.no;render();window.scrollTo({top:0,behavior:'smooth'});
+}
+function clearCurrent(){items=[];customer.value='';itemName.value='';price.value='';qty.value=1;disc.value=0;billNo.value=newNo();render();qrBox.style.display='none'}
+function showUPI(){
+ const c=calc(), id=upiId.value.trim();
+ if(!id){alert('Enter your UPI ID first');return}
+ if(c.total<=0){alert('Add items first');return}
+ const link='upi://pay?pa='+encodeURIComponent(id)+'&pn='+encodeURIComponent(shopName.value||'Shop')+'&am='+c.total.toFixed(2)+'&cu=INR&tn='+encodeURIComponent(billNo.value);
+ upiLink.href=link;upiLink.textContent='Pay '+money(c.total)+' using UPI';
+ qrBox.style.display='block';
+}
+async function shareBill(){
+ const c=calc(), text=`${shopName.value||'Bill Book'}\nBill: ${billNo.value}\nCustomer: ${customer.value||'Walk-in'}\nTotal: ${money(c.total)}`;
+ if(navigator.share){try{await navigator.share({title:'Bill',text})}catch(e){}}else{navigator.clipboard.writeText(text);alert('Bill copied to clipboard')}
+}
+init();
+</script>
+</body>
+</html>
